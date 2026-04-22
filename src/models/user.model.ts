@@ -4,9 +4,9 @@ export interface User {
   password_hash: string;
   username: string;
   email_verified: boolean;
-  verification_token: string | null;
+  verification_token_hash: string | null;
   verification_expires_at: Date | null;
-  reset_token: string | null;
+  reset_token_hash: string | null;
   reset_expires_at: Date | null;
   created_at: Date;
   updated_at: Date;
