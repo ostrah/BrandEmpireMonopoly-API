@@ -1,6 +1,7 @@
 import nodemailer, { type Transporter } from 'nodemailer';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
+import { escapeHtml } from '../utils/html.js';
 
 let transporter: Transporter | null = null;
 
@@ -65,7 +66,7 @@ const button = (href: string, label: string): string => `
 
 export const mailService = {
   async sendVerificationEmail(to: string, username: string, token: string): Promise<void> {
-    const url = `${env.FRONTEND_URL}/verify-email?token=${encodeURIComponent(token)}`;
+    const url = `${env.API_BASE_URL}/auth/verify-email?token=${encodeURIComponent(token)}`;
     const html = layout(
       'Confirm your email',
       `<p>Hi <b>${escapeHtml(username)}</b>,</p>
@@ -77,7 +78,7 @@ export const mailService = {
   },
 
   async sendPasswordResetEmail(to: string, username: string, token: string): Promise<void> {
-    const url = `${env.FRONTEND_URL}/reset-password?token=${encodeURIComponent(token)}`;
+    const url = `${env.API_BASE_URL}/auth/reset-password?token=${encodeURIComponent(token)}`;
     const html = layout(
       'Reset your password',
       `<p>Hi <b>${escapeHtml(username)}</b>,</p>
@@ -88,12 +89,3 @@ export const mailService = {
     await sendMail(to, 'Reset your password — Brand Empire Monopoly', html);
   },
 };
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
