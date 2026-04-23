@@ -93,6 +93,15 @@ export const roomRepository = {
     return rows[0]?.exists ?? false;
   },
 
+  /** Non-transactional membership check — used by the WS layer for subscribe authorization. */
+  async isPlayerDirect(room_id: string, user_id: string): Promise<boolean> {
+    const { rows } = await pool.query<{ exists: boolean }>(
+      'SELECT EXISTS(SELECT 1 FROM room_players WHERE room_id = $1 AND user_id = $2) AS exists',
+      [room_id, user_id]
+    );
+    return rows[0]?.exists ?? false;
+  },
+
   async addPlayerTx(client: PoolClient, room_id: string, user_id: string): Promise<void> {
     await client.query(
       'INSERT INTO room_players (room_id, user_id) VALUES ($1, $2)',

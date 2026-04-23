@@ -5,6 +5,7 @@ import { withTransaction } from '../db/transaction.js';
 import { roomRepository } from '../repositories/room.repository.js';
 import type { RoomWithPlayers } from '../models/room.model.js';
 import type { CreateRoomBody } from '../schemas/room.schemas.js';
+import { emitRoomEvent } from '../ws/events.js';
 
 /**
  * Crockford-ish alphabet: no 0/O/1/I to avoid ambiguous reads.
@@ -105,11 +106,26 @@ export const roomService = {
     });
 
     const full = await roomRepository.findById(roomId);
+    // Broadcast AFTER the transaction commits so subscribers only see
+    // events that reflect committed state.
+    const joined = full?.players.find((p) => p.user_id === userId);
+    if (joined) {
+      emitRoomEvent({
+        type: 'room:player_joined',
+        roomId,
+        player: { user_id: joined.user_id, username: joined.username },
+      });
+    }
     return full!;
   },
 
   async leave(roomId: string, userId: string): Promise<void> {
-    await withTransaction(async (client) => {
+    type LeaveOutcome =
+      | { kind: 'left'; userId: string }
+      | { kind: 'handover'; userId: string; newHostId: string }
+      | { kind: 'deleted' };
+
+    const outcome = await withTransaction<LeaveOutcome>(async (client) => {
       const room = await roomRepository.findByIdForUpdate(client, roomId);
       if (!room) throw HttpError.notFound('room_not_found', 'Room not found');
 
@@ -126,16 +142,33 @@ export const roomService = {
           await roomRepository.updateHost(client, roomId, newHost);
           await roomRepository.removePlayer(client, roomId, userId);
           logger.info('Host left, new host assigned', { roomId, newHostId: newHost });
-        } else {
-          // Last player leaving: drop the room (room_players rows cascade).
-          await roomRepository.deleteRoom(client, roomId);
-          logger.info('Last player left, room deleted', { roomId });
+          return { kind: 'handover', userId, newHostId: newHost };
         }
-      } else {
-        await roomRepository.removePlayer(client, roomId, userId);
-        logger.info('Player left room', { roomId, userId });
+        // Last player leaving: drop the room (room_players rows cascade).
+        await roomRepository.deleteRoom(client, roomId);
+        logger.info('Last player left, room deleted', { roomId });
+        return { kind: 'deleted' };
       }
+
+      await roomRepository.removePlayer(client, roomId, userId);
+      logger.info('Player left room', { roomId, userId });
+      return { kind: 'left', userId };
     });
+
+    // Broadcasts happen post-commit so subscribers never observe an
+    // in-flight state that could be rolled back.
+    switch (outcome.kind) {
+      case 'left':
+        emitRoomEvent({ type: 'room:player_left', roomId, userId: outcome.userId });
+        break;
+      case 'handover':
+        emitRoomEvent({ type: 'room:player_left', roomId, userId: outcome.userId });
+        emitRoomEvent({ type: 'room:host_changed', roomId, hostId: outcome.newHostId });
+        break;
+      case 'deleted':
+        emitRoomEvent({ type: 'room:closed', roomId });
+        break;
+    }
   },
 
   /**
@@ -153,5 +186,6 @@ export const roomService = {
       await roomRepository.deleteRoom(client, roomId);
     });
     logger.info('Room closed by host', { roomId, hostId: userId });
+    emitRoomEvent({ type: 'room:closed', roomId });
   },
 };
